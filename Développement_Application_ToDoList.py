@@ -16,6 +16,7 @@ if not os.path.exists(TASK_FILE):
     with open(TASK_FILE, "w") as f:
         json.dump([], f)
 
+
 # --- Gestion des utilisateurs ---
 
 def load_users():
@@ -23,24 +24,32 @@ def load_users():
     with open(USER_FILE, "r") as f:
         return json.load(f)
 
+
 def save_users(users):
     """Enregistre les utilisateurs dans le fichier JSON."""
     with open(USER_FILE, "w") as f:
         json.dump(users, f)
 
-def register_user(email, password):
+
+def register_user(first_name, last_name, email, password):
     """Inscrit un nouvel utilisateur si l'email n'est pas déjà utilisé."""
     users = load_users()
     if email in users:
         return False
-    users[email] = password
+    users[email] = {
+        "first_name": first_name,
+        "last_name": last_name,
+        "password": password
+    }
     save_users(users)
     return True
+
 
 def authenticate_user(email, password):
     """Vérifie si les identifiants sont corrects."""
     users = load_users()
-    return users.get(email) == password
+    return email in users and users[email]["password"] == password
+
 
 # --- Gestion des tâches ---
 
@@ -49,16 +58,19 @@ def load_tasks():
     with open(TASK_FILE, "r") as f:
         return json.load(f)
 
+
 def save_tasks(tasks):
     """Enregistre la liste des tâches dans le fichier JSON."""
     with open(TASK_FILE, "w") as f:
         json.dump(tasks, f)
+
 
 def add_task(title, description, status="En cours"):
     """Ajoute une nouvelle tâche avec un titre, une description et un statut."""
     tasks = load_tasks()
     tasks.append({"title": title, "description": description, "status": status})
     save_tasks(tasks)
+
 
 def get_tasks(status_filter=None):
     """Retourne toutes les tâches ou filtre selon le statut."""
@@ -67,6 +79,7 @@ def get_tasks(status_filter=None):
         return [t for t in tasks if t["status"] == status_filter]
     return tasks
 
+
 def delete_task(index):
     """Supprime une tâche en fonction de son index."""
     tasks = load_tasks()
@@ -74,12 +87,14 @@ def delete_task(index):
         del tasks[index]
         save_tasks(tasks)
 
+
 def update_task(index, title, description, status):
     """Met à jour une tâche avec un nouveau titre, description et statut."""
     tasks = load_tasks()
     if 0 <= index < len(tasks):
         tasks[index] = {"title": title, "description": description, "status": status}
         save_tasks(tasks)
+
 
 # --- Interface utilisateur avec Tkinter ---
 
@@ -103,9 +118,44 @@ class TaskApp:
         self.login_btn = tk.Button(self.login_frame, text="Se connecter", command=self.login)
         self.login_btn.grid(row=2, column=0, columnspan=2)
 
-        self.register_btn = tk.Button(self.login_frame, text="S'inscrire", command=self.register)
+        self.register_btn = tk.Button(self.login_frame, text="S'inscrire", command=self.show_register_form)
         self.register_btn.grid(row=3, column=0, columnspan=2)
 
+        self.login_frame.pack()
+
+    def show_register_form(self):
+        """Affiche le formulaire d'inscription."""
+        self.login_frame.pack_forget()
+
+        self.register_frame = tk.Frame(self.root)
+
+        tk.Label(self.register_frame, text="Prénom:").grid(row=0, column=0)
+        self.first_name_entry = tk.Entry(self.register_frame)
+        self.first_name_entry.grid(row=0, column=1)
+
+        tk.Label(self.register_frame, text="Nom:").grid(row=1, column=0)
+        self.last_name_entry = tk.Entry(self.register_frame)
+        self.last_name_entry.grid(row=1, column=1)
+
+        tk.Label(self.register_frame, text="Email:").grid(row=2, column=0)
+        self.register_email_entry = tk.Entry(self.register_frame)
+        self.register_email_entry.grid(row=2, column=1)
+
+        tk.Label(self.register_frame, text="Mot de passe:").grid(row=3, column=0)
+        self.register_password_entry = tk.Entry(self.register_frame, show="*")
+        self.register_password_entry.grid(row=3, column=1)
+
+        self.submit_btn = tk.Button(self.register_frame, text="S'inscrire", command=self.register)
+        self.submit_btn.grid(row=4, column=0, pady=10)
+
+        self.back_btn = tk.Button(self.register_frame, text="Retour", command=self.back_to_login)
+        self.back_btn.grid(row=4, column=1, pady=10)
+
+        self.register_frame.pack()
+
+    def back_to_login(self):
+        """Retourne à l'écran de connexion."""
+        self.register_frame.pack_forget()
         self.login_frame.pack()
 
     def login(self):
@@ -120,10 +170,22 @@ class TaskApp:
 
     def register(self):
         """Inscrit un nouvel utilisateur."""
-        email = self.email_entry.get()
-        password = self.password_entry.get()
-        if register_user(email, password):
+        first_name = self.first_name_entry.get()
+        last_name = self.last_name_entry.get()
+        email = self.register_email_entry.get()
+        password = self.register_password_entry.get()
+
+        if not all([first_name, last_name, email, password]):
+            messagebox.showerror("Erreur", "Veuillez remplir tous les champs")
+            return
+
+        if register_user(first_name, last_name, email, password):
             messagebox.showinfo("Succès", "Inscription réussie")
+            self.register_frame.pack_forget()
+            self.login_frame.pack()
+            # Pré-remplir l'email dans le champ de connexion
+            self.email_entry.delete(0, tk.END)
+            self.email_entry.insert(0, email)
         else:
             messagebox.showerror("Erreur", "Email déjà utilisé")
 
@@ -143,7 +205,8 @@ class TaskApp:
 
         tk.Label(self.main_frame, text="Statut:").grid(row=2, column=0)
         self.status_var = tk.StringVar(value="En cours")
-        self.status_menu = ttk.Combobox(self.main_frame, textvariable=self.status_var, values=["En cours", "Terminé"], state="readonly")
+        self.status_menu = ttk.Combobox(self.main_frame, textvariable=self.status_var, values=["En cours", "Terminé"],
+                                        state="readonly")
         self.status_menu.grid(row=2, column=1)
 
         self.add_btn = tk.Button(self.main_frame, text="Ajouter", command=self.add_task)
@@ -165,7 +228,8 @@ class TaskApp:
         self.task_list.bind("<ButtonRelease-1>", self.select_task)
 
         # --- Filtre des tâches ---
-        self.filter_menu = ttk.Combobox(self.main_frame, textvariable=self.filter_var, values=["Tout", "En cours", "Terminé"], state="readonly")
+        self.filter_menu = ttk.Combobox(self.main_frame, textvariable=self.filter_var,
+                                        values=["Tout", "En cours", "Terminé"], state="readonly")
         self.filter_menu.grid(row=5, column=0)
         self.filter_menu.bind("<<ComboboxSelected>>", lambda e: self.refresh_tasks())
 
@@ -218,6 +282,7 @@ class TaskApp:
             self.task_list.delete(row)
         for i, t in enumerate(get_tasks(self.filter_var.get())):
             self.task_list.insert("", "end", iid=str(i), values=(t["title"], t["description"], t["status"]))
+
 
 if __name__ == "__main__":
     root = tk.Tk()
