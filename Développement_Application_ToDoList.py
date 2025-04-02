@@ -51,6 +51,11 @@ def authenticate_user(email, password):
     return email in users and users[email]["password"] == password
 
 
+def is_valid_email(email):
+    """Vérifie si l'email contient un @."""
+    return "@" in email
+
+
 # --- Gestion des tâches ---
 
 def load_tasks():
@@ -162,6 +167,11 @@ class TaskApp:
         """Vérifie l'authentification et charge l'interface principale en cas de succès."""
         email = self.email_entry.get()
         password = self.password_entry.get()
+
+        if not is_valid_email(email):
+            messagebox.showerror("Erreur", "L'adresse email doit contenir un @")
+            return
+
         if authenticate_user(email, password):
             self.login_frame.destroy()
             self.show_main_app()
@@ -177,6 +187,10 @@ class TaskApp:
 
         if not all([first_name, last_name, email, password]):
             messagebox.showerror("Erreur", "Veuillez remplir tous les champs")
+            return
+
+        if not is_valid_email(email):
+            messagebox.showerror("Erreur", "L'adresse email doit contenir un @")
             return
 
         if register_user(first_name, last_name, email, password):
