@@ -73,8 +73,15 @@ def save_tasks(tasks):
 def add_task(title, description, status="En cours"):
     """Ajoute une nouvelle tâche avec un titre, une description et un statut."""
     tasks = load_tasks()
+    # Vérifier si une tâche avec le même titre existe déjà
+    for task in tasks:
+        if task["title"].lower() == title.lower():
+            return False  # Retourne False si le titre existe déjà
+
     tasks.append({"title": title, "description": description, "status": status})
     save_tasks(tasks)
+    return True  # Retourne True si la tâche a été ajoutée
+
 
 
 def get_tasks(status_filter=None):
@@ -255,9 +262,11 @@ class TaskApp:
         description = self.desc_entry.get()
         status = self.status_var.get()
         if title and description:
-            add_task(title, description, status)
-            self.refresh_tasks()
-            messagebox.showinfo("Succès", "Tâche ajoutée")
+            if add_task(title, description, status):
+                self.refresh_tasks()
+                messagebox.showinfo("Succès", "Tâche ajoutée")
+            else:
+                messagebox.showerror("Erreur", "Une tâche avec ce nom existe déjà")
         else:
             messagebox.showerror("Erreur", "Veuillez remplir tous les champs")
 
