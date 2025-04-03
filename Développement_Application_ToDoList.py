@@ -61,7 +61,10 @@ def is_valid_email(email):
 def load_tasks():
     """Charge la liste des tâches depuis le fichier JSON."""
     with open(TASK_FILE, "r") as f:
-        return json.load(f)
+        try:
+            return json.load(f)
+        except json.JSONDecodeError:
+            return {}
 
 
 def save_tasks(tasks):
@@ -70,42 +73,90 @@ def save_tasks(tasks):
         json.dump(tasks, f)
 
 
-def add_task(title, description, status="En cours"):
-    """Ajoute une nouvelle tâche avec un titre, une description et un statut."""
+def add_task(email, title, description, status="En cours"):
+    """Ajoute une nouvelle tâche avec vérification globale du nom."""
     tasks = load_tasks()
+
+    # Si tasks est une liste (ancien format), la convertir en dictionnaire
+    if isinstance(tasks, list):
+        tasks = {"default_user": tasks}  # Conversion vers le nouveau format
+        save_tasks(tasks)  # Sauvegarder immédiatement le nouveau format
+
     # Vérifier si une tâche avec le même titre existe déjà
-    for task in tasks:
-        if task["title"].lower() == title.lower():
-            return False  # Retourne False si le titre existe déjà
+    for user_tasks in tasks.values():
+        for task in user_tasks:
+            if task["title"].lower() == title.lower():
+                return False
 
-    tasks.append({"title": title, "description": description, "status": status})
+    # Si le titre est unique, ajouter la tâche
+    if email not in tasks:
+        tasks[email] = []
+
+    tasks[email].append({"title": title, "description": description, "status": status})
     save_tasks(tasks)
-    return True  # Retourne True si la tâche a été ajoutée
+    return True
 
 
-
-def get_tasks(status_filter=None):
-    """Retourne toutes les tâches ou filtre selon le statut."""
+def get_tasks(email, status_filter=None):
+    """Retourne les tâches d'un utilisateur, filtrées par statut si demandé."""
     tasks = load_tasks()
+
+    # Gestion de la compatibilité avec l'ancien format
+    if isinstance(tasks, list):
+        if status_filter and status_filter != "Tout":
+            return [t for t in tasks if t["status"] == status_filter]
+        return tasks
+
+    user_tasks = tasks.get(email, [])
     if status_filter and status_filter != "Tout":
-        return [t for t in tasks if t["status"] == status_filter]
-    return tasks
+        return [t for t in user_tasks if t["status"] == status_filter]
+    return user_tasks
 
 
-def delete_task(index):
-    """Supprime une tâche en fonction de son index."""
+def delete_task(email, index):
+    """Supprime une tâche d'un utilisateur spécifique."""
     tasks = load_tasks()
-    if 0 <= index < len(tasks):
-        del tasks[index]
+
+    # Gestion de la compatibilité avec l'ancien format
+    if isinstance(tasks, list):
+        if 0 <= index < len(tasks):
+            del tasks[index]
+            save_tasks(tasks)
+        return
+
+    if email in tasks and 0 <= index < len(tasks[email]):
+        del tasks[email][index]
         save_tasks(tasks)
 
 
-def update_task(index, title, description, status):
-    """Met à jour une tâche avec un nouveau titre, description et statut."""
+def update_task(email, index, title, description, status):
+    """Met à jour une tâche d'un utilisateur spécifique."""
     tasks = load_tasks()
-    if 0 <= index < len(tasks):
-        tasks[index] = {"title": title, "description": description, "status": status}
+
+    # Gestion de la compatibilité avec l'ancien format
+    if isinstance(tasks, list):
+        if 0 <= index < len(tasks):
+            # Vérification du nom unique
+            for i, task in enumerate(tasks):
+                if task["title"].lower() == title.lower() and i != index:
+                    return False
+            tasks[index] = {"title": title, "description": description, "status": status}
+            save_tasks(tasks)
+            return True
+        return False
+
+    if email in tasks and 0 <= index < len(tasks[email]):
+        # Vérification du nom unique
+        for user_email, user_tasks in tasks.items():
+            for i, task in enumerate(user_tasks):
+                if task["title"].lower() == title.lower() and not (user_email == email and i == index):
+                    return False
+        tasks[email][index] = {"title": title, "description": description, "status": status}
         save_tasks(tasks)
+        return True
+    return False
+
+
 
 
 # --- Interface utilisateur avec Tkinter ---
@@ -114,6 +165,7 @@ class TaskApp:
     def __init__(self, root):
         """Initialise l'application avec l'écran de connexion."""
         self.root = root
+        self.current_user = None  # Ajout de cet attribut
         self.root.title("Gestionnaire de tâches")
         self.filter_var = tk.StringVar(value="Tout")
 
@@ -180,6 +232,7 @@ class TaskApp:
             return
 
         if authenticate_user(email, password):
+            self.current_user = email  # Définit l'utilisateur courant
             self.login_frame.destroy()
             self.show_main_app()
         else:
@@ -257,34 +310,51 @@ class TaskApp:
         self.refresh_tasks()
 
     def add_task(self):
-        """Ajoute une tâche et met à jour l'affichage."""
+        """Ajoute une tâche avec vérification globale du nom."""
+        if not hasattr(self, 'current_user') or not self.current_user:
+            messagebox.showerror("Erreur", "Aucun utilisateur connecté")
+            return
         title = self.title_entry.get()
         description = self.desc_entry.get()
         status = self.status_var.get()
+
         if title and description:
-            if add_task(title, description, status):
+            if add_task(self.current_user, title, description, status):
                 self.refresh_tasks()
                 messagebox.showinfo("Succès", "Tâche ajoutée")
             else:
-                messagebox.showerror("Erreur", "Une tâche avec ce nom existe déjà")
+                messagebox.showerror("Erreur", "Ce nom de tâche est déjà utilisé par un autre utilisateur")
         else:
             messagebox.showerror("Erreur", "Veuillez remplir tous les champs")
 
     def update_selected_task(self):
         """Met à jour une tâche sélectionnée."""
+        if not hasattr(self, 'current_user') or not self.current_user:
+            messagebox.showerror("Erreur", "Aucun utilisateur connecté")
+            return
+
         selected_item = self.task_list.selection()
         if selected_item:
             index = int(self.task_list.index(selected_item[0]))
-            update_task(index, self.title_entry.get(), self.desc_entry.get(), self.status_var.get())
-            self.refresh_tasks()
-            messagebox.showinfo("Succès", "Tâche modifiée")
+            if update_task(self.current_user, index,
+                           self.title_entry.get(),
+                           self.desc_entry.get(),
+                           self.status_var.get()):
+                self.refresh_tasks()
+                messagebox.showinfo("Succès", "Tâche modifiée")
+            else:
+                messagebox.showerror("Erreur", "Ce nom de tâche est déjà utilisé")
 
     def delete_selected_task(self):
         """Supprime une tâche sélectionnée."""
+        if not hasattr(self, 'current_user') or not self.current_user:
+            messagebox.showerror("Erreur", "Aucun utilisateur connecté")
+            return
+
         selected_item = self.task_list.selection()
         if selected_item:
             index = int(self.task_list.index(selected_item[0]))
-            delete_task(index)
+            delete_task(self.current_user, index)
             self.refresh_tasks()
             messagebox.showinfo("Succès", "Tâche supprimée")
 
@@ -301,9 +371,12 @@ class TaskApp:
 
     def refresh_tasks(self):
         """Actualise l'affichage des tâches."""
+        if not hasattr(self, 'current_user') or not self.current_user:
+            return
+
         for row in self.task_list.get_children():
             self.task_list.delete(row)
-        for i, t in enumerate(get_tasks(self.filter_var.get())):
+        for i, t in enumerate(get_tasks(self.current_user, self.filter_var.get())):
             self.task_list.insert("", "end", iid=str(i), values=(t["title"], t["description"], t["status"]))
 
 
