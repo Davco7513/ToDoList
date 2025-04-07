@@ -2,6 +2,14 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 import json
 import os
+import jwt
+from datetime import datetime, timedelta
+import hashlib
+
+# Configuration JWT
+SECRET_KEY = "violon999PMS"  # À changer en production
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # Initialisation des fichiers JSON pour stocker les utilisateurs et les tâches
 USER_FILE = "users.json"
@@ -17,7 +25,7 @@ if not os.path.exists(TASK_FILE):
         json.dump([], f)
 
 
-# --- Gestion des utilisateurs ---
+# --- Gestion des utilisateurs avec JWT ---
 
 def load_users():
     """Charge les utilisateurs depuis le fichier JSON."""
@@ -28,7 +36,35 @@ def load_users():
 def save_users(users):
     """Enregistre les utilisateurs dans le fichier JSON."""
     with open(USER_FILE, "w") as f:
-        json.dump(users, f)
+        json.dump(users, f, indent=4)
+
+
+def hash_password(password):
+    """Hash le mot de passe avec SHA-256."""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
+def create_access_token(data: dict, expires_delta: timedelta = None):
+    """Crée un token JWT."""
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+
+def verify_token(token: str):
+    """Vérifie la validité d'un token JWT."""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
 
 
 def register_user(first_name, last_name, email, password):
@@ -36,19 +72,36 @@ def register_user(first_name, last_name, email, password):
     users = load_users()
     if email in users:
         return False
+
+    # Hashage du mot de passe avant stockage
+    hashed_password = hash_password(password)
+
     users[email] = {
         "first_name": first_name,
         "last_name": last_name,
-        "password": password
+        "password": hashed_password  # On stocke le hash, pas le mot de passe en clair
     }
     save_users(users)
     return True
 
 
 def authenticate_user(email, password):
-    """Vérifie si les identifiants sont corrects."""
+    """Vérifie si les identifiants sont corrects et retourne un token JWT."""
     users = load_users()
-    return email in users and users[email]["password"] == password
+    if email not in users:
+        return None
+
+    # Vérification du mot de passe hashé
+    hashed_password = hash_password(password)
+    if users[email]["password"] == hashed_password:
+        # Création du token JWT
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={"sub": email},
+            expires_delta=access_token_expires
+        )
+        return access_token
+    return None
 
 
 def is_valid_email(email):
@@ -56,7 +109,7 @@ def is_valid_email(email):
     return "@" in email
 
 
-# --- Gestion des tâches ---
+# --- Gestion des tâches (inchangée) ---
 
 def load_tasks():
     """Charge la liste des tâches depuis le fichier JSON."""
@@ -70,7 +123,7 @@ def load_tasks():
 def save_tasks(tasks):
     """Enregistre la liste des tâches dans le fichier JSON."""
     with open(TASK_FILE, "w") as f:
-        json.dump(tasks, f)
+        json.dump(tasks, f, indent=4)
 
 
 def add_task(email, title, description, status="En cours"):
@@ -157,15 +210,14 @@ def update_task(email, index, title, description, status):
     return False
 
 
-
-
 # --- Interface utilisateur avec Tkinter ---
 
 class TaskApp:
     def __init__(self, root):
         """Initialise l'application avec l'écran de connexion."""
         self.root = root
-        self.current_user = None  # Ajout de cet attribut
+        self.current_user = None
+        self.access_token = None  # Stockage du token JWT
         self.root.title("Gestionnaire de tâches")
         self.filter_var = tk.StringVar(value="Tout")
 
@@ -231,10 +283,16 @@ class TaskApp:
             messagebox.showerror("Erreur", "L'adresse email doit contenir un @")
             return
 
-        if authenticate_user(email, password):
-            self.current_user = email  # Définit l'utilisateur courant
-            self.login_frame.destroy()
-            self.show_main_app()
+        token = authenticate_user(email, password)
+        if token:
+            self.access_token = token
+            payload = verify_token(token)
+            if payload:
+                self.current_user = payload.get("sub")  # email de l'utilisateur
+                self.login_frame.destroy()
+                self.show_main_app()
+            else:
+                messagebox.showerror("Erreur", "Session expirée, veuillez vous reconnecter")
         else:
             messagebox.showerror("Erreur", "Identifiants incorrects")
 
@@ -263,8 +321,24 @@ class TaskApp:
         else:
             messagebox.showerror("Erreur", "Email déjà utilisé")
 
+    def check_auth(self):
+        """Vérifie si l'utilisateur est toujours authentifié."""
+        if not self.access_token:
+            return False
+
+        payload = verify_token(self.access_token)
+        if not payload:
+            messagebox.showerror("Session expirée", "Votre session a expiré, veuillez vous reconnecter")
+            self.main_frame.destroy()
+            self.__init__(self.root)
+            return False
+        return True
+
     def show_main_app(self):
         """Affiche l'interface principale de gestion des tâches."""
+        if not self.check_auth():
+            return
+
         self.main_frame = tk.Frame(self.root)
         self.main_frame.pack()
 
@@ -311,9 +385,9 @@ class TaskApp:
 
     def add_task(self):
         """Ajoute une tâche avec vérification globale du nom."""
-        if not hasattr(self, 'current_user') or not self.current_user:
-            messagebox.showerror("Erreur", "Aucun utilisateur connecté")
+        if not self.check_auth():
             return
+
         title = self.title_entry.get()
         description = self.desc_entry.get()
         status = self.status_var.get()
@@ -329,8 +403,7 @@ class TaskApp:
 
     def update_selected_task(self):
         """Met à jour une tâche sélectionnée."""
-        if not hasattr(self, 'current_user') or not self.current_user:
-            messagebox.showerror("Erreur", "Aucun utilisateur connecté")
+        if not self.check_auth():
             return
 
         selected_item = self.task_list.selection()
@@ -347,8 +420,7 @@ class TaskApp:
 
     def delete_selected_task(self):
         """Supprime une tâche sélectionnée."""
-        if not hasattr(self, 'current_user') or not self.current_user:
-            messagebox.showerror("Erreur", "Aucun utilisateur connecté")
+        if not self.check_auth():
             return
 
         selected_item = self.task_list.selection()
@@ -371,7 +443,7 @@ class TaskApp:
 
     def refresh_tasks(self):
         """Actualise l'affichage des tâches."""
-        if not hasattr(self, 'current_user') or not self.current_user:
+        if not self.check_auth():
             return
 
         for row in self.task_list.get_children():
